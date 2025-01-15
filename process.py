@@ -19,18 +19,22 @@ def process_audio(audio_url: str, lyrics: str) -> dict:
             lyrics_path = lyrics_file.name
             temp_files.append(lyrics_path)
 
-        # Transcribe audio
-        srt_path = transcribe_audio(mp3_path)
-        temp_files.append(srt_path)
+        # Transcribe audio to get SRT
+        whisper_srt = transcribe_audio(mp3_path)
+        temp_files.append(whisper_srt)
+
+        # Create output SRT path
+        output_srt = mp3_path + ".synced.srt"
+        temp_files.append(output_srt)
 
         # Synchronize
         syncer = SrtSync()
-        syncer.sync(srt_path, lyrics_path)
+        syncer.sync(whisper_srt, lyrics_path)  # This will output to lyrics_path + ".srt"
+        
+        # Convert synchronized SRT to LRC JSON
         synced_srt = lyrics_path + ".srt"
-        temp_files.append(synced_srt)
-
-        # Convert to LRC JSON
-        result = srt_to_lrc_json(synced_srt)
+        result = srt_to_lrc_json(synced_srt)  # Use the synchronized SRT file
+        temp_files.append(synced_srt)  # Add to temp files for cleanup
         
         return result
     

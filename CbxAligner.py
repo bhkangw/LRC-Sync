@@ -10,122 +10,170 @@ from CbxTokenizer import CbxTokenizer
 from CbxTokenizer import CbxToken
 
 class CbxAligner:
+    # Cost constants
     _COST_INCREDIBLE = 1000000
-    compressPosFactor = 1.0/1000000.0
+    _COST_LINE_BREAK = 100  # High cost for breaking lines
+    _COST_WORD_MISMATCH = 10
+    _COST_APOSTROPHE_MISMATCH = 5  # Lower cost for matching words that differ only by apostrophe
     
     def __init__(self):
         self.tokenizer = CbxTokenizer()
+        self.compressPosFactor = 1.0/1000000.0
     
-    def syncMarks1to2(self,xml1,xml2):
-        pairs = self.alignXml(xml1,xml2)
+    def syncMarks1to2(self, xml1, xml2):
+        print("\nCbxAligner.syncMarks1to2:")
+        print(f"Input XML1 preview:\n{xml1[:500]}")
+        print(f"Input XML2 preview:\n{xml2[:500]}")
+        
+        pairs = self.alignXml(xml1, xml2)
+        print(f"Number of aligned pairs: {len(pairs)}")
+        print("First few pairs:")
+        for i, p in enumerate(pairs[:5]):
+            print(f"Pair {i}: {p[0]} -> {p[1]}")
+        
         fused = []
-        for p in pairs:
-            t1 = "---"
-            if p[0] is not None:
-                t1 = "["+str(p[0].index)+"|"+p[0].token+"]"
-                if p[0].kind == CbxToken.TAG:
-                    fused.append(p[0])
-            t2 = "---"
-            if p[1] is not None:
-                t2 = "["+str(p[1].index)+"|"+p[1].token+"]"
-                fused.append(p[1])
-            print(f"{t1}\t{t2}")
-        return "".join([t.token for t in fused])
-
-    
-    def alignXml(self,xml1,xml2):
-        toks1 = self.tokenizer.tokenize_xml(xml1)
-        toks2 = self.tokenizer.tokenize_xml(xml2)
-        return self.alignToks(toks1,toks2)
+        current_line = []
         
-    def alignToks(self,toks1,toks2):
-        # Init
-        choices = [[0 for y in range(0,len(toks2)+1)] for x in range(0,len(toks1)+1)]
-        costs = [[0 for y in range(0,len(toks2)+1)] for x in range(0,len(toks1)+1)]
-        for x in range(1,len(toks1)+1):
-            choices[x][0] = 1 # Left
-            costs[x][0] = x
-        for y in range(1,len(toks2)+1):
-            choices[0][y] = 2 # Up
-            costs[0][y] = y
-        # Eval costs
-        for x in range(1,len(toks1)+1):
-            for y in range(1,len(toks2)+1):
-                cost = self.costP(toks1[x-1],toks2[y-1])
-                # For equivalent matches, prefer the earlier
-                cost += (toks1[x-1].index + toks2[y-1].index)*self.compressPosFactor
-                cost0 = costs[x-1][y-1] + 0.99 * cost
-                cost1 = costs[x-1][y] + self.costT(toks1[x-1])
-                cost2 = costs[x][y-1] + self.costT(toks2[y-1])
-                if cost0 <= cost1 and cost0 <= cost2:
-                    choices[x][y] = 0 # Match
-                    costs[x][y] = cost0
-                elif cost1 < cost2:
-                    choices[x][y] = 1 # Left
-                    costs[x][y] = cost1
+        for p in pairs:
+            # Skip section headers
+            if p[0] and p[0].kind == CbxToken.SECTION_HEADER:
+                continue
+            if p[1] and p[1].kind == CbxToken.SECTION_HEADER:
+                continue
+                
+            # Handle line breaks
+            if (p[0] and p[0].kind == CbxToken.LINE_BREAK) or (p[1] and p[1].kind == CbxToken.LINE_BREAK):
+                if current_line:
+                    # Join the current line with proper spacing
+                    line_text = ""
+                    for i, token in enumerate(current_line):
+                        if i > 0 and token.kind not in [CbxToken.PUNCT] and current_line[i-1].kind not in [CbxToken.PUNCT]:
+                            line_text += " "
+                        line_text += token.token
+                    fused.append(line_text)
+                    print(f"Added fused line: {line_text}")
+                    current_line = []
+                continue
+            
+            # Add non-empty tokens to current line
+            if p[1] is not None:
+                current_line.append(p[1])
+                print(f"Added token to line: {p[1].token}")
+        
+        # Handle any remaining tokens in the last line
+        if current_line:
+            line_text = ""
+            for i, token in enumerate(current_line):
+                if i > 0 and token.kind not in [CbxToken.PUNCT] and current_line[i-1].kind not in [CbxToken.PUNCT]:
+                    line_text += " "
+                line_text += token.token
+            fused.append(line_text)
+            print(f"Added final fused line: {line_text}")
+        
+        result = "\n".join(fused)  # Join lines with newlines
+        print(f"\nFinal aligned result preview:\n{result[:500]}")
+        return result
+    
+    def alignXml(self, xml1, xml2):
+        toks1 = self.tokenizer.tokenize_lyrics(xml1)  # Use lyrics tokenizer
+        toks2 = self.tokenizer.tokenize_lyrics(xml2)
+        return self.alignToks(toks1, toks2)
+        
+    def alignToks(self, toks1, toks2):
+        # Init matrix
+        choices = [[0 for y in range(len(toks2) + 1)] for x in range(len(toks1) + 1)]
+        costs = [[0 for y in range(len(toks2) + 1)] for x in range(len(toks1) + 1)]
+        
+        # Initialize first row and column
+        for x in range(1, len(toks1) + 1):
+            choices[x][0] = 1  # Left
+            costs[x][0] = self._calculate_gap_cost(toks1[x-1])
+        for y in range(1, len(toks2) + 1):
+            choices[0][y] = 2  # Up
+            costs[0][y] = self._calculate_gap_cost(toks2[y-1])
+        
+        # Fill the matrix
+        for x in range(1, len(toks1) + 1):
+            for y in range(1, len(toks2) + 1):
+                tok1, tok2 = toks1[x-1], toks2[y-1]
+                
+                # Calculate costs for each possible move
+                cost_diag = costs[x-1][y-1] + self._calculate_match_cost(tok1, tok2)
+                cost_left = costs[x-1][y] + self._calculate_gap_cost(tok1)
+                cost_up = costs[x][y-1] + self._calculate_gap_cost(tok2)
+                
+                # Choose the minimum cost move
+                if cost_diag <= cost_left and cost_diag <= cost_up:
+                    choices[x][y] = 0  # Diagonal
+                    costs[x][y] = cost_diag
+                elif cost_left <= cost_up:
+                    choices[x][y] = 1  # Left
+                    costs[x][y] = cost_left
                 else:
-                    choices[x][y] = 2 # Up
-                    costs[x][y] = cost2
+                    choices[x][y] = 2  # Up
+                    costs[x][y] = cost_up
         
-        # BackProp
-        x = len(toks1)
-        y = len(toks2)
-        pairs = []
-        while x > 0 or y > 0:
-            if choices[x][y] == 0:
-                x -= 1
-                y -= 1
-                pairs.append([toks1[x],toks2[y]])
-            elif choices[x][y] == 1:
-                x -= 1
-                pairs.append([toks1[x],None])
-            else:
-                y -= 1
-                pairs.append([None,toks2[y]])
-        # Revert
-        pairs = [pairs[p] for p in range(len(pairs)-1,-1,-1)]
-        return pairs
-                  
-    def costT(self,tok):
-        st = tok.token.strip()
-        if st == "":
-            return 0.1
-        return 1.0
+        # Backtrack to get alignment
+        return self._backtrack(choices, toks1, toks2)
     
-    def costP(self,tok1,tok2):
-        if tok1.kind != tok2.kind:
-            return self._COST_INCREDIBLE
-        if tok1.token == tok2.token:
+    def _calculate_match_cost(self, tok1, tok2):
+        # Skip cost calculation for section headers
+        if tok1.kind == CbxToken.SECTION_HEADER or tok2.kind == CbxToken.SECTION_HEADER:
             return 0
-        st1 = tok1.token.strip()
-        st2 = tok2.token.strip()
-        if st1 == st2:
-            return 0.01
-        if st1 == "" or st2 == "":
-            return 1.5
-        lc1 = tok1.token.lower()
-        lc2 = tok2.token.lower()
-        if lc1 == lc2:
-            return 0.01
-        if lc1.startswith(lc2) or lc1.endswith(lc2) or lc2.startswith(lc1) or lc2.endswith(lc1):
-            return 1.0
-        if len(lc1) > 2 and len(lc2) > 2 and (lc1.find(lc2) >= 0 or lc2.find(lc1) >= 0):
-            return 1.0
-        return 2.0 - 0.1*(min(len(lc1),len(lc2))/(len(lc1)+len(lc2)))
+            
+        # Exact match
+        if tok1.token.lower() == tok2.token.lower():
+            return 0
+            
+        # Line break mismatch
+        if tok1.kind == CbxToken.LINE_BREAK or tok2.kind == CbxToken.LINE_BREAK:
+            return self._COST_LINE_BREAK
+            
+        # Word with/without apostrophe
+        if (tok1.kind == CbxToken.WORD_WITH_APOSTROPHE and tok2.kind == CbxToken.WORD) or \
+           (tok2.kind == CbxToken.WORD_WITH_APOSTROPHE and tok1.kind == CbxToken.WORD):
+            return self._COST_APOSTROPHE_MISMATCH
+            
+        # Regular word mismatch
+        return self._COST_WORD_MISMATCH
     
-    def tracePairs(self,pairs):
-        for p in pairs:
-            t1 = "---"
-            if p[0] is not None:
-                t1 = "["+str(p[0].index)+"|"+p[0].token+"]"
-            t2 = "---"
-            if p[1] is not None:
-                t2 = "["+str(p[1].index)+"|"+p[1].token+"]"
-            print(f"{t1}\t{t2}")    
+    def _calculate_gap_cost(self, tok):
+        if tok.kind == CbxToken.SECTION_HEADER:
+            return 0
+        if tok.kind == CbxToken.LINE_BREAK:
+            return self._COST_LINE_BREAK
+        return self._COST_WORD_MISMATCH
     
-    def test(self):
-        self.tracePairs(
-            self.alignXml("- <a>Bonjour toi </a> ! Comment ça va, <i>aujourd'hui</i> ?"
-                          ,"<a>Salut moi </a> ! Comment ça va super bien <i>aujourd'hui</i> ?.."))
+    def _backtrack(self, choices, toks1, toks2):
+        pairs = []
+        x, y = len(toks1), len(toks2)
+        
+        while x > 0 or y > 0:
+            if x > 0 and y > 0 and choices[x][y] == 0:  # Diagonal
+                pairs.append((toks1[x-1], toks2[y-1]))
+                x -= 1
+                y -= 1
+            elif x > 0 and choices[x][y] == 1:  # Left
+                pairs.append((toks1[x-1], None))
+                x -= 1
+            else:  # Up
+                pairs.append((None, toks2[y-1]))
+                y -= 1
+        
+        return list(reversed(pairs))
 
-# CbxAligner().test()
+    def test_lyrics(self):
+        # Test with a lyric example
+        text1 = """[Verse]
+Dust off the shoulders, heavyweight soldier
+Heart like boulders, world gettin' colder"""
+        
+        text2 = """[Verse]
+Dust off the shoulders, heavyweight soldier
+Heart like boulders, world getting colder"""
+        
+        result = self.syncMarks1to2(text1, text2)
+        print("Aligned Result:")
+        print(result)
+
+# CbxAligner().test_lyrics()

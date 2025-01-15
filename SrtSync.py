@@ -28,35 +28,61 @@ class SrtSync:
         self.pathSrt = pathSrt
         self.pathTxt = pathTxt
         
+        print(f"Loading SRT from: {self.pathSrt}")
         # Load files
         with open(self.pathSrt, 'r', encoding='utf-8') as f:
             self.srt = f.read()
+        print(f"SRT content preview:\n{self.srt[:500]}")
         
+        print(f"Loading TXT from: {self.pathTxt}")
         with open(self.pathTxt, 'r', encoding='utf-8') as f:
             self.txt = f.read()
+        print(f"TXT content preview:\n{self.txt[:500]}")
         
-        # Convert
+        # Parse original SRT timestamps
+        timestamps = []
+        current_timestamp = None
+        for line in self.srt.split('\n'):
+            if '-->' in line:
+                timestamps.append(line.strip())
+        print(f"Found {len(timestamps)} timestamps")
+        
+        # Convert SRT to XML while preserving timestamps
+        print("Converting SRT to XML...")
         self.xml = self.toXml(self.srt)
+        print(f"XML content preview:\n{self.xml[:500]}")
         
-        # Align
-        self.synced = self.aligner.syncMarks1to2(self.xml, self.txt)
-        self.synced = re.sub(r'\n*<time id="([0-9]+)" stamp="([^\"]+)"/>\n*'
-                             , r'\n\n\1\n\2\n'
-                             , self.synced)
-        self.synced = re.sub(r'&amp;'
-                             , r'&'
-                             , self.synced)
-        self.synced = re.sub(r'&lt;'
-                             , r'<'
-                             , self.synced)
-        self.synced = re.sub(r'&gt;'
-                             , r'>'
-                             , self.synced)
-        self.synced = self.synced.strip()
-        print(self.synced)
+        # Align text while preserving timestamp markers
+        print("Aligning text...")
+        aligned_lines = self.aligner.syncMarks1to2(self.xml, self.txt).split('\n')
+        print(f"Got {len(aligned_lines)} aligned lines")
         
-        with open(self.pathTxt+".srt", 'w', encoding='utf-8') as f:
+        # Reconstruct SRT format with timestamps
+        counter = 1
+        output_lines = []
+        
+        # Pair each aligned line with a timestamp
+        for i, line in enumerate(aligned_lines):
+            if line.strip():  # Skip empty lines
+                if i < len(timestamps):  # Make sure we have a timestamp
+                    output_lines.extend([
+                        str(counter),
+                        timestamps[i],
+                        line,
+                        ''
+                    ])
+                    counter += 1
+                    print(f"Added block {counter-1} with timestamp: {timestamps[i]}")
+        
+        self.synced = '\n'.join(output_lines)
+        print(f"\nFinal SRT content:\n{self.synced}")
+        
+        # Write output
+        output_path = self.pathTxt+".srt"
+        print(f"Writing to: {output_path}")
+        with open(output_path, 'w', encoding='utf-8') as f:
             f.write(self.synced)
+        print("Write complete")
         
     def test(self):
         self.sync("./data/KatyPerry-Firework.mp3.srt", "./data/KatyPerry-Firework.txt")

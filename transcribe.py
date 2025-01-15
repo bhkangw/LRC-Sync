@@ -4,16 +4,9 @@ import whisper
 from whisper.utils import WriteSRT
 import os
 import logging
-import sys
 
-# Configure logging to output to stdout for Colab visibility
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
-)
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 modelSize = "large"
@@ -37,16 +30,30 @@ def transcribe_audio(audio_path: str, model_size: str = "large") -> str:
         srt_path = audio_path + ".srt"
         logger.info(f"Attempting to save SRT to: {srt_path}")
         
-        p = Path(audio_path)
-        try:
-            os.makedirs(p.parent, exist_ok=True)
-            logger.info(f"Created/verified directory: {p.parent}")
-        except Exception as e:
-            logger.error(f"Failed to create directory {p.parent}: {str(e)}")
-            raise
+        # Create parent directory if it doesn't exist
+        os.makedirs(os.path.dirname(srt_path), exist_ok=True)
         
-        writer = WriteSRT(p.parent)
-        writer(result, audio_path)
+        # Write SRT file using a file object
+        writer = WriteSRT(os.path.dirname(srt_path))
+        with open(srt_path, 'w', encoding='utf-8') as srt_file:
+            writer.write_result(result, srt_file)
+            srt_file.flush()  # Ensure content is written
+        
+        # Verify the content and format
+        with open(srt_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+            logger.info(f"SRT file content preview (first 200 chars): {content[:200]}")
+            
+            # Validate SRT format
+            if not content.strip():
+                raise ValueError("SRT file was created but is empty")
+            
+            # Check for basic SRT format (timestamps with -->)
+            if '-->' not in content:
+                raise ValueError("Generated file doesn't appear to be in SRT format (no timestamps found)")
+            
+            # Log the full path to avoid confusion
+            logger.info(f"Full SRT file path: {os.path.abspath(srt_path)}")
         
         if not os.path.exists(srt_path):
             raise FileNotFoundError(f"SRT file was not created at expected path: {srt_path}")
