@@ -120,7 +120,7 @@ class SrtSync:
         # Create output SRT blocks
         output_lines = []
         counter = 1
-        used_lyrics_indices = set()
+        processed_blocks = set()  # Track which blocks we've processed
         
         # Skip the first block if it's an intro/adlib
         start_block = 1
@@ -129,7 +129,7 @@ class SrtSync:
         
         # First pass: direct matching of lyrics lines
         lyrics_index = 0
-        for block_num in range(start_block, max(timestamps.keys()) + 1):
+        for block_num in range(start_block, len(lyrics_lines) + start_block):
             if block_num in timestamps and lyrics_index < len(lyrics_lines):
                 output_lines.extend([
                     str(counter),
@@ -137,7 +137,7 @@ class SrtSync:
                     lyrics_lines[lyrics_index],
                     ''
                 ])
-                used_lyrics_indices.add(lyrics_index)
+                processed_blocks.add(block_num)
                 print(f"Added block {counter} with timestamp: {timestamps[block_num]} and text: {lyrics_lines[lyrics_index]}")
                 counter += 1
                 lyrics_index += 1
@@ -146,6 +146,10 @@ class SrtSync:
         SIMILARITY_THRESHOLD = 0.7  # Adjust this threshold as needed
         
         for block_num in range(start_block, max(timestamps.keys()) + 1):
+            # Skip blocks we've already processed
+            if block_num in processed_blocks:
+                continue
+                
             if block_num in srt_lines and block_num in timestamps:  # Extra line
                 transcribed_line = srt_lines[block_num]
                 
@@ -161,13 +165,14 @@ class SrtSync:
                         best_match = lyrics_line
                         best_index = i
                 
-                if best_match and block_num > len(lyrics_lines):  # Only add if it's past the original lyrics
+                if best_match:  # Only add if we found a match
                     output_lines.extend([
                         str(counter),
                         timestamps[block_num],  # Use the actual timestamp from transcription
                         best_match,  # Use the matching lyrics line instead of transcribed line
                         ''
                     ])
+                    processed_blocks.add(block_num)
                     print(f"Added repeated line {counter} with timestamp: {timestamps[block_num]} and text: {best_match} (similarity: {best_score:.2f})")
                     counter += 1
         
