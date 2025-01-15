@@ -14,15 +14,33 @@ class SrtSync:
         self.aligner = CbxAligner()
         
     def toXml(self,srt):
-        xml = "\n"+srt+"\n"
-        xml = re.sub(r'[\n\r]+','\n',xml)
-        xml = re.sub(r'&','&amp;',xml)
-        xml = re.sub(r'<','&lt;',xml)
-        xml = re.sub(r'>','&gt;',xml)
-        xml = re.sub(r'\n([0-9]+)\n([0-9]+:[0-9]+:[0-9]+[,.][0-9]+ --&gt; [0-9]+:[0-9]+:[0-9]+[,.][0-9]+)\n'
-                     ,r'<time id="\1" stamp="\2"/>'
-                     ,xml)
-        return xml
+        # Split into blocks first
+        blocks = []
+        current_block = []
+        
+        for line in srt.split('\n'):
+            if line.strip():
+                current_block.append(line)
+            elif current_block:
+                blocks.append(current_block)
+                current_block = []
+        if current_block:
+            blocks.append(current_block)
+            
+        # Convert blocks to XML
+        xml_blocks = []
+        for block in blocks:
+            if len(block) >= 3:  # Valid SRT block should have at least 3 lines
+                block_num = block[0].strip()
+                if block_num.isdigit():
+                    timestamp = block[1].strip()
+                    text = ' '.join(block[2:]).strip()
+                    # Escape XML special characters in text only
+                    text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                    xml_block = f'<time block="{block_num}" stamp="{timestamp}"/>{text}'
+                    xml_blocks.append(xml_block)
+        
+        return '\n'.join(xml_blocks)
         
     def sync(self,pathSrt,pathTxt):
         self.pathSrt = pathSrt
@@ -39,12 +57,15 @@ class SrtSync:
             self.txt = f.read()
         print(f"TXT content preview:\n{self.txt[:500]}")
         
-        # Parse original SRT timestamps
-        timestamps = []
-        current_timestamp = None
+        # Parse original SRT timestamps with block numbers
+        timestamps = {}  # Changed to dict to store block -> timestamp mapping
+        current_block = None
         for line in self.srt.split('\n'):
-            if '-->' in line:
-                timestamps.append(line.strip())
+            if line.strip().isdigit():
+                current_block = int(line.strip())
+            elif '-->' in line and current_block is not None:
+                timestamps[current_block] = line.strip()
+                print(f"Stored timestamp for block {current_block}: {line.strip()}")
         print(f"Found {len(timestamps)} timestamps")
         
         # Convert SRT to XML while preserving timestamps
@@ -52,27 +73,32 @@ class SrtSync:
         self.xml = self.toXml(self.srt)
         print(f"XML content preview:\n{self.xml[:500]}")
         
-        # Align text while preserving timestamp markers
-        print("Aligning text...")
-        aligned_lines = self.aligner.syncMarks1to2(self.xml, self.txt).split('\n')
-        print(f"Got {len(aligned_lines)} aligned lines")
+        # Split the lyrics text into lines, removing section headers and empty lines
+        lyrics_lines = []
+        for line in self.txt.split('\n'):
+            line = line.strip()
+            if line and not (line.startswith('[') and line.endswith(']')):
+                lyrics_lines.append(line)
         
-        # Reconstruct SRT format with timestamps
-        counter = 1
+        # Create output SRT blocks, skipping the first block (adlib)
         output_lines = []
+        counter = 1
         
-        # Pair each aligned line with a timestamp
-        for i, line in enumerate(aligned_lines):
-            if line.strip():  # Skip empty lines
-                if i < len(timestamps):  # Make sure we have a timestamp
-                    output_lines.extend([
-                        str(counter),
-                        timestamps[i],
-                        format_text(line),
-                        ''
-                    ])
-                    counter += 1
-                    print(f"Added block {counter-1} with timestamp: {timestamps[i]}")
+        # Start from index 1 to skip the adlib block
+        for i, timestamp_block in enumerate(timestamps.items(), start=1):
+            block_num, timestamp = timestamp_block
+            if block_num == 1:  # Skip the adlib block
+                continue
+                
+            if i-1 < len(lyrics_lines):  # i-1 because we want to use 0-based index for lyrics
+                output_lines.extend([
+                    str(counter),
+                    timestamp,
+                    lyrics_lines[i-2],  # i-2 to account for both 0-based index and skipping adlib
+                    ''
+                ])
+                print(f"Added block {counter} with timestamp: {timestamp} and text: {lyrics_lines[i-2]}")
+                counter += 1
         
         self.synced = '\n'.join(output_lines)
         print(f"\nFinal SRT content:\n{self.synced}")
