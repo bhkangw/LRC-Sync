@@ -2,6 +2,7 @@ import argparse
 from pathlib import Path
 import whisper
 from whisper.utils import WriteSRT
+import os
 
 modelSize = "large"
 
@@ -18,6 +19,7 @@ def transcribe_audio(audio_path: str, model_size: str = "large") -> str:
     srt_path = audio_path + ".srt"
     print(f"Saving: {srt_path} ...")
     p = Path(audio_path)
+    os.makedirs(p.parent, exist_ok=True)
     writer = WriteSRT(p.parent)
     writer(result, audio_path)
     
