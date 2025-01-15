@@ -1,0 +1,14 @@
+# Ignore virtual environments
+venv/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+
+# Temporary or output files
+*.srt
+*.txt
+*.log
+*.mp3
+
+.DS_Store
