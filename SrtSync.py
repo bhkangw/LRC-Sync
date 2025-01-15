@@ -68,7 +68,7 @@ class SrtSync:
                     output_lines.extend([
                         str(counter),
                         timestamps[i],
-                        line,
+                        format_text(line),
                         ''
                     ])
                     counter += 1
@@ -87,6 +87,8 @@ class SrtSync:
     def test(self):
         self.sync("./data/KatyPerry-Firework.mp3.srt", "./data/KatyPerry-Firework.txt")
 
+def format_text(text):
+    return text.replace(',', ', ')
 
 def main():
     parser = argparse.ArgumentParser(description="Synchronize SRT timestamps over an existing accurate transcription.")

@@ -13,6 +13,14 @@ def download_mp3(url: str) -> str:
             tmp_file.write(chunk)
         return tmp_file.name
 
+def format_text(text):
+    """Format text by adding proper spacing around punctuation"""
+    # Add space after comma if not followed by space
+    text = text.replace(',', ', ').replace('  ', ' ')
+    # Fix cases where we might have added too many spaces
+    text = text.replace(' ,', ',').replace(',  ', ', ')
+    return text
+
 def srt_to_lrc_json(srt_path: str) -> dict:
     """Convert SRT file to LRC JSON format"""
     print(f"Processing SRT file: {srt_path}")  # Debug
@@ -90,7 +98,7 @@ def srt_to_lrc_json(srt_path: str) -> dict:
                 print(f"Created entry: {timestamp} {text}")  # Debug
                 return {
                     "timestamp": timestamp,
-                    "text": text
+                    "text": format_text(text)
                 }
         except (ValueError, IndexError) as e:
             print(f"Error processing timestamp {start_time}: {e}")
