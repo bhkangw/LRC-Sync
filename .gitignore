@@ -7,8 +7,9 @@ __pycache__/
 
 # Temporary or output files
 *.srt
-*.txt
 *.log
 *.mp3
 
 .DS_Store
+
+data/
