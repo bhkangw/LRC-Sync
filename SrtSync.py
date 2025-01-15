@@ -42,6 +42,31 @@ class SrtSync:
         
         return '\n'.join(xml_blocks)
         
+    def get_line_similarity(self, line1, line2):
+        """Calculate similarity between two lines using character-level comparison"""
+        line1 = line1.lower().strip()
+        line2 = line2.lower().strip()
+        
+        if not line1 or not line2:
+            return 0.0
+        
+        # Convert to sets of characters for comparison
+        set1 = set(line1)
+        set2 = set(line2)
+        
+        # Calculate Jaccard similarity
+        intersection = len(set1.intersection(set2))
+        union = len(set1.union(set2))
+        
+        if union == 0:
+            return 0.0
+        
+        # Also check for exact substring matches
+        if line1 in line2 or line2 in line1:
+            return 0.9  # High confidence for substring matches
+        
+        return intersection / union
+
     def sync(self,pathSrt,pathTxt):
         self.pathSrt = pathSrt
         self.pathTxt = pathTxt
@@ -59,13 +84,25 @@ class SrtSync:
         
         # Parse original SRT timestamps with block numbers
         timestamps = {}  # Changed to dict to store block -> timestamp mapping
+        srt_lines = {}  # Store original transcribed lines
         current_block = None
+        current_text = None
+        
         for line in self.srt.split('\n'):
-            if line.strip().isdigit():
-                current_block = int(line.strip())
+            line = line.strip()
+            if line.isdigit():
+                current_block = int(line)
+                current_text = None
             elif '-->' in line and current_block is not None:
-                timestamps[current_block] = line.strip()
-                print(f"Stored timestamp for block {current_block}: {line.strip()}")
+                timestamps[current_block] = line
+                print(f"Stored timestamp for block {current_block}: {line}")
+            elif line and current_block is not None and '-->' not in line:
+                if current_text is None:
+                    current_text = line
+                else:
+                    current_text += " " + line
+                srt_lines[current_block] = current_text
+        
         print(f"Found {len(timestamps)} timestamps")
         
         # Convert SRT to XML while preserving timestamps
@@ -80,25 +117,59 @@ class SrtSync:
             if line and not (line.startswith('[') and line.endswith(']')):
                 lyrics_lines.append(line)
         
-        # Create output SRT blocks, skipping the first block (adlib)
+        # Create output SRT blocks
         output_lines = []
         counter = 1
+        used_lyrics_indices = set()
         
-        # Start from index 1 to skip the adlib block
-        for i, timestamp_block in enumerate(timestamps.items(), start=1):
-            block_num, timestamp = timestamp_block
-            if block_num == 1:  # Skip the adlib block
-                continue
-                
-            if i-1 < len(lyrics_lines):  # i-1 because we want to use 0-based index for lyrics
+        # Skip the first block if it's an intro/adlib
+        start_block = 1
+        if 1 in srt_lines and "yeah" in srt_lines[1].lower():
+            start_block = 2
+        
+        # First pass: direct matching of lyrics lines
+        lyrics_index = 0
+        for block_num in range(start_block, max(timestamps.keys()) + 1):
+            if block_num in timestamps and lyrics_index < len(lyrics_lines):
                 output_lines.extend([
                     str(counter),
-                    timestamp,
-                    lyrics_lines[i-2],  # i-2 to account for both 0-based index and skipping adlib
+                    timestamps[block_num],
+                    lyrics_lines[lyrics_index],
                     ''
                 ])
-                print(f"Added block {counter} with timestamp: {timestamp} and text: {lyrics_lines[i-2]}")
+                used_lyrics_indices.add(lyrics_index)
+                print(f"Added block {counter} with timestamp: {timestamps[block_num]} and text: {lyrics_lines[lyrics_index]}")
                 counter += 1
+                lyrics_index += 1
+        
+        # Second pass: check remaining transcribed lines for similarity with any lyrics line
+        SIMILARITY_THRESHOLD = 0.7  # Adjust this threshold as needed
+        
+        for block_num in range(start_block, max(timestamps.keys()) + 1):
+            if block_num in srt_lines and block_num in timestamps:  # Extra line
+                transcribed_line = srt_lines[block_num]
+                
+                # Find best matching lyrics line
+                best_match = None
+                best_score = 0
+                best_index = -1
+                
+                for i, lyrics_line in enumerate(lyrics_lines):
+                    similarity = self.get_line_similarity(transcribed_line, lyrics_line)
+                    if similarity > SIMILARITY_THRESHOLD and similarity > best_score:
+                        best_score = similarity
+                        best_match = lyrics_line
+                        best_index = i
+                
+                if best_match and block_num > len(lyrics_lines):  # Only add if it's past the original lyrics
+                    output_lines.extend([
+                        str(counter),
+                        timestamps[block_num],  # Use the actual timestamp from transcription
+                        best_match,  # Use the matching lyrics line instead of transcribed line
+                        ''
+                    ])
+                    print(f"Added repeated line {counter} with timestamp: {timestamps[block_num]} and text: {best_match} (similarity: {best_score:.2f})")
+                    counter += 1
         
         self.synced = '\n'.join(output_lines)
         print(f"\nFinal SRT content:\n{self.synced}")
