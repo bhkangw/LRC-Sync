@@ -42,7 +42,7 @@ python app.py
 ```
 
 3. Get synchronized lyrics in response:
-
+DESIRED OUTPUT
 ```json
 {
   "lines": [
@@ -56,20 +56,6 @@ python app.py
     }
   ]
 }
-```
-
-### Command Line (Legacy)
-
-For direct transcription:
-
-```bash
-python transcribe.py data/song.mp3 large
-```
-
-For synchronization:
-
-```bash
-python SrtSync.py "./data/song.mp3.srt" "./data/lyrics.txt"
 ```
 
 ## Google Colab
